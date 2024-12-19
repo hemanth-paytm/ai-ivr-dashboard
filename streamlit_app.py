@@ -1,151 +1,196 @@
 import streamlit as st
 import pandas as pd
-import math
 from pathlib import Path
 
-# Set the title and favicon that appear in the Browser's tab bar.
+# Set page config
 st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
+    page_title="AI IVR Dashboard",
+    page_icon=":bar_chart:",
+    layout="wide"
 )
-
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
 
 @st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
-
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
+def load_data():
     """
+    Load and prepare the data from base_dod_data.csv
+    We will rename certain columns to match the desired naming convention.
+    """
+    DATA_FILENAME = Path(__file__).parent / 'data/base_dod_data.csv'
+    df = pd.read_csv(DATA_FILENAME)
+    
+    # Convert date_ column to datetime
+    if df['date_'].dtype == 'object':
+        df['date_'] = pd.to_datetime(df['date_'])
+    
+    # Rename columns to match the requested naming:
+    rename_map = {
+        "sb_sessions": "sb_hardware_sessions",
+        "sb_messages": "sb_hardware_messages",
+        "edc_sessions": "edc_hardware_sessions",
+        "edc_messages": "edc_hardware_messages",
+        "payment_acceptence_sessions": "payment_acceptance_sessions",
+        "payment_acceptence_messages": "payment_acceptance_messages"
+    }
+    df.rename(columns=rename_map, inplace=True)
+    
+    return df
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+df = load_data()
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+# Mapping display names to column name prefixes
+category_mapping = {
+    "Soundbox Hardware": "sb_hardware",
+    "Device Return": "device_return",
+    "Business Loan": "business_loan",
+    "Customer Care": "customer_care",
+    "Profile": "profile",
+    "EDC Hardware": "edc_hardware",
+    "Payment Acceptence": "payment_acceptance",
+    "Refund": "refund",
+    "Rental Charges": "rental_charges",
+    "Generic Query": "generic_query",
+    "Settlement & Deductions": "settlement_deductions",
+    "Others": "other"
+}
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
+st.title("AI IVR Dashboard")
+
+st.markdown("""
+Welcome to the AI IVR Dashboard.  
+Use the filters below to explore daily sessions/messages across different intent categories.
+""")
+
+# Overall Metrics
+st.subheader("Overall Metrics")
+
+col1, col2 = st.columns(2)
+with col1:
+    total_sessions = df['overall_sessions'].sum()
+    st.metric("Total Sessions (Nov Upwards)", f"{total_sessions:,}")
+
+with col2:
+    total_messages = df['overall_messages'].sum()
+    st.metric("Total Messages (Nov Upwards)", f"{total_messages:,}")
+
+st.markdown("---")
+
+# Filters Above Charts
+st.header("Filters")
+
+col_cat = st.columns([2])[0]
+
+with col_cat:
+    selected_categories = st.multiselect(
+        "Select categories:",
+        list(category_mapping.keys()),
+        default=[
+            "Soundbox Hardware",
+            "Business Loan",
+            "Profile",
+            "Payment Acceptence",
+            "Settlement & Deductions",
+            "EDC Hardware"
+        ]
     )
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+st.markdown("---")
 
-    return gdp_df
+filtered_df = df
 
-gdp_df = get_gdp_data()
+# Filtered Overall Metrics
+st.subheader("Filtered Overall Metrics")
+col3, col4 = st.columns(2)
+with col3:
+    filtered_total_sessions = filtered_df['overall_sessions'].sum()
+    st.metric("Total Sessions (Filtered)", f"{filtered_total_sessions:,}")
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
+with col4:
+    filtered_total_messages = filtered_df['overall_messages'].sum()
+    st.metric("Total Messages (Filtered)", f"{filtered_total_messages:,}")
 
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
+st.markdown("""
+*These values reflect activity across all dates since we've removed the date filter.*  
+""")
 
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
+selected_intent_sessions = [f"{category_mapping[cat]}_sessions" for cat in selected_categories]
+selected_intent_messages = [f"{category_mapping[cat]}_messages" for cat in selected_categories]
 
-# Add some spacing
-''
-''
+st.header("Daily Intent-wise Sessions")
 
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
+if selected_categories:
+    sessions_melted = filtered_df.melt(
+        id_vars=['date_'],
+        value_vars=selected_intent_sessions,
+        var_name='Intent',
+        value_name='Sessions'
+    )
 
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
+    sessions_melted['Intent'] = sessions_melted['Intent'].apply(
+        lambda x: [k for k,v in category_mapping.items() if x.startswith(v)][0]
+    )
 
-countries = gdp_df['Country Code'].unique()
+    # Ensure zero is included
+    if not sessions_melted.empty:
+        min_date = sessions_melted['date_'].min()
+        # Add a zero baseline row
+        zero_row = pd.DataFrame({'date_':[min_date], 'Intent':[sessions_melted['Intent'].iloc[0]], 'Sessions':[0]})
+        sessions_melted = pd.concat([sessions_melted, zero_row], ignore_index=True)
+        
+        # Add a top buffer row to ensure top value is fully visible
+        max_val = sessions_melted['Sessions'].max()
+        top_buffer = pd.DataFrame({'date_':[min_date], 'Intent':[sessions_melted['Intent'].iloc[0]], 'Sessions':[max_val*1.05]})
+        sessions_melted = pd.concat([sessions_melted, top_buffer], ignore_index=True)
 
-if not len(countries):
-    st.warning("Select at least one country")
+    st.line_chart(
+        data=sessions_melted,
+        x='date_',
+        y='Sessions',
+        color='Intent',
+        height=600
+    )
+else:
+    st.info("Please select at least one category.")
 
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
+st.markdown("""
+Use this chart to analyze daily trends in sessions across intents.
+""")
 
-''
-''
-''
+st.header("Daily Intent-wise Messages")
 
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
+if selected_categories:
+    messages_melted = filtered_df.melt(
+        id_vars=['date_'],
+        value_vars=selected_intent_messages,
+        var_name='Intent',
+        value_name='Messages'
+    )
 
-st.header('GDP over time', divider='gray')
+    messages_melted['Intent'] = messages_melted['Intent'].apply(
+        lambda x: [k for k,v in category_mapping.items() if x.startswith(v)][0]
+    )
 
-''
+    # Ensure zero is included
+    if not messages_melted.empty:
+        min_date = messages_melted['date_'].min()
+        # Add a zero baseline row
+        zero_row_msg = pd.DataFrame({'date_':[min_date], 'Intent':[messages_melted['Intent'].iloc[0]], 'Messages':[0]})
+        messages_melted = pd.concat([messages_melted, zero_row_msg], ignore_index=True)
+        
+        # Add a top buffer row for messages
+        max_val_msg = messages_melted['Messages'].max()
+        top_buffer_msg = pd.DataFrame({'date_':[min_date], 'Intent':[messages_melted['Intent'].iloc[0]], 'Messages':[max_val_msg*1.05]})
+        messages_melted = pd.concat([messages_melted, top_buffer_msg], ignore_index=True)
 
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
+    st.line_chart(
+        data=messages_melted,
+        x='date_',
+        y='Messages',
+        color='Intent',
+        height=600
+    )
+else:
+    st.info("Please select at least one category.")
 
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+st.markdown("""
+Use this chart to analyze daily trends in messages across intents.
+""")
